@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -72,7 +73,7 @@ func readRequest(buf []byte) HTTP_Request {
 	}
 
 	request.Verb = startLine[0]
-	request.Resource = startLine[1]
+	request.Resource = filepath.Clean(startLine[1])
 	request.HTTPVersion = startLine[2]
 
 	return request
@@ -84,15 +85,16 @@ func writeResponse(req HTTP_Request) []byte {
 	var httpResponse HTTP_Response
 
 	if req.Resource == "/" {
-		fileLocation = fileLocation + "index.html"
+		fileLocation = filepath.Join(fileLocation, "index.html")
 	} else {
-		fileLocation = fileLocation + req.Resource
+		fileLocation = filepath.Join(fileLocation, req.Resource)
 	}
 
 	if fileExists(fileLocation) {
 		httpResponse.StatusCode = "200 OK"
 
 		file, err := os.Open(fileLocation)
+
 		if err != nil {
 			fmt.Println(err)
 		}
