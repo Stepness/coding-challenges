@@ -13,3 +13,5 @@ Based on [RFC 1035](https://datatracker.ietf.org/doc/html/rfc1035)
 Receive a dns request, forwards it to google dns and returns the result to the requester.
 
 It also implements functions to read and write the messages in memory, but are unused. Was just an exercise to handle variables that represents single flags of DNS Message.
+
+## Docker

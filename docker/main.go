@@ -1,0 +1,59 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"syscall"
+)
+
+func main() {
+	switch os.Args[1] {
+	case "run":
+		run(os.Args)
+	case "child":
+		child(os.Args)
+	default:
+		fmt.Printf("Unknown command: %v\n", os.Args[1])
+	}
+}
+
+func run(args []string) {
+	fmt.Println("Parent args", args)
+	cmd := exec.Command("/proc/self/exe", append([]string{"child"}, os.Args[2:]...)...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWUTS,
+	}
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
+	cmd.Stdin = os.Stdin
+
+	var err = cmd.Run()
+	var exitErr *exec.ExitError
+	if err != nil {
+		fmt.Printf("ERROR: The command failed to run: %v\n", err)
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode())
+		}
+	}
+}
+
+func child(args []string) {
+	fmt.Println("Child args", args)
+	err := syscall.Sethostname([]byte("containera"))
+	if err != nil {
+		fmt.Printf("Error setting hostname: %v\n", err)
+		os.Exit(1)
+	}
+
+	cmd := exec.Command(args[2], args[3:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Child error: %v\n", err)
+		os.Exit(1)
+	}
+}
