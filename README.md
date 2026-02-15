@@ -23,3 +23,6 @@ To create a container:
 1. Your cli will need to create a new namespace with the clone() syscall. In this case an UTS namespace.
 2. The process needs to replicate itself (/proc/self/exe) to run commands inside the container. It does that by recalling himself (child), with different parameters.
 3. Change the root directory of the process (chroot and chdir)
+4. Create a proc namespace and mount on it the namespace's proc virtual filesystem
+5. Isolate the mount of prof from the host with unshare() or a private mount
+6. Make the container rootless by mapping the host user to the container root. In this way the root in the container has at most the host user privileges (the user that ran the container).
