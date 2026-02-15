@@ -41,9 +41,22 @@ func run(args []string) {
 
 func child(args []string) {
 	fmt.Println("Child args", args)
-	err := syscall.Sethostname([]byte("containera"))
-	if err != nil {
-		fmt.Printf("Error setting hostname: %v\n", err)
+
+	errChroot := syscall.Chroot("./resources")
+	if errChroot != nil {
+		fmt.Printf("Error setting chroot: %v\n", errChroot)
+		os.Exit(1)
+	}
+
+	errChdir := os.Chdir("/")
+	if errChdir != nil {
+		fmt.Printf("Chdir error: %v\n", errChdir)
+		os.Exit(1)
+	}
+
+	errSetHostname := syscall.Sethostname([]byte("container"))
+	if errSetHostname != nil {
+		fmt.Printf("Error setting hostname: %v\n", errSetHostname)
 		os.Exit(1)
 	}
 
