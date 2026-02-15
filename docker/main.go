@@ -23,7 +23,7 @@ func run(args []string) {
 	fmt.Println("Parent args", args)
 	cmd := exec.Command("/proc/self/exe", append([]string{"child"}, os.Args[2:]...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUTS,
+		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
 	}
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
@@ -42,6 +42,8 @@ func run(args []string) {
 func child(args []string) {
 	fmt.Println("Child args", args)
 
+	syscall.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, "")
+
 	errChroot := syscall.Chroot("./resources")
 	if errChroot != nil {
 		fmt.Printf("Error setting chroot: %v\n", errChroot)
@@ -54,6 +56,7 @@ func child(args []string) {
 		os.Exit(1)
 	}
 
+	syscall.Mount("proc", "/proc", "proc", 0, "")
 	errSetHostname := syscall.Sethostname([]byte("container"))
 	if errSetHostname != nil {
 		fmt.Printf("Error setting hostname: %v\n", errSetHostname)
@@ -69,4 +72,5 @@ func child(args []string) {
 		fmt.Printf("Child error: %v\n", err)
 		os.Exit(1)
 	}
+
 }
