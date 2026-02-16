@@ -9,11 +9,14 @@ import (
 )
 
 func main() {
+	if os.Getenv("IS_CHILD_PROCESS") == "true" {
+		child(os.Args)
+		return
+	}
+
 	switch os.Args[1] {
 	case "run":
 		run(os.Args)
-	case "child":
-		child(os.Args)
 	default:
 		fmt.Printf("Unknown command: %v\n", os.Args[1])
 	}
@@ -42,6 +45,7 @@ func run(args []string) {
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
 	cmd.Stdin = os.Stdin
+	cmd.Env = append(os.Environ(), "IS_CHILD_PROCESS=true")
 
 	var err = cmd.Run()
 	var exitErr *exec.ExitError
@@ -58,22 +62,22 @@ func child(args []string) {
 
 	syscall.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, "")
 
-	errChroot := syscall.Chroot("./resources")
-	if errChroot != nil {
-		fmt.Printf("Error setting chroot: %v\n", errChroot)
+	err := syscall.Chroot("./resources")
+	if err != nil {
+		fmt.Printf("Error setting chroot: %v\n", err)
 		os.Exit(1)
 	}
 
-	errChdir := os.Chdir("/")
-	if errChdir != nil {
-		fmt.Printf("Chdir error: %v\n", errChdir)
+	err = os.Chdir("/")
+	if err != nil {
+		fmt.Printf("Chdir error: %v\n", err)
 		os.Exit(1)
 	}
 
 	syscall.Mount("proc", "/proc", "proc", 0, "")
-	errSetHostname := syscall.Sethostname([]byte("container"))
-	if errSetHostname != nil {
-		fmt.Printf("Error setting hostname: %v\n", errSetHostname)
+	err = syscall.Sethostname([]byte("container"))
+	if err != nil {
+		fmt.Printf("Error setting hostname: %v\n", err)
 		os.Exit(1)
 	}
 

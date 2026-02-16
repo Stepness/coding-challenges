@@ -19,6 +19,9 @@ It also implements functions to read and write the messages in memory, but are u
 [Challenge Source](https://codingchallenges.fyi/challenges/challenge-docker)
 
 There should be a resoruces folder under the docker folder that contains an Alpine mini root filesystem.
+
+Run it with `go run main.go run <command>` (eg: command = sh will create a shell session in the container.) 
+
 To create a container:
 1. Your cli will need to create a new namespace with the clone() syscall. In this case an UTS namespace.
 2. The process needs to replicate itself (/proc/self/exe) to run commands inside the container. It does that by recalling himself (child), with different parameters.
