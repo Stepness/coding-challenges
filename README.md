@@ -28,4 +28,4 @@ To create a container:
 4. Create a proc namespace and mount on it the namespace's proc virtual filesystem
 5. Isolate the mount of prof from the host with unshare() or a private mount
 6. Make the container rootless by mapping the host user to the container root. In this way the root in the container has at most the host user privileges (the user that ran the container).
-7. Mount sys by also cloning the Network namespace. Sys is needed to manage cgroups.
+7. Create cgroups files in the host to manage container resources. Max and min files to manage the resources restrictions (like memory.max) and cgroup.proc to map the container's PID to the cgroup restrictions. 
