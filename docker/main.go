@@ -1,13 +1,42 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 )
+
+type RegistryAuthResponse struct {
+	Token string
+}
+
+type Manifest struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	MediaType     string `json:"mediaType"`
+	Manifests     []struct {
+		Digest    string `json:"digest"`
+		MediaType string `json:"mediaType"`
+		Platform  struct {
+			Architecture string `json:"architecture"`
+			OS           string `json:"os"`
+		} `json:"platform"`
+	} `json:"manifests"`
+	Config struct {
+		Digest string `json:"digest"`
+	} `json:"config"`
+	Layers []struct {
+		Digest string `json:"digest"`
+	} `json:"layers"`
+}
+
+var httpClient = &http.Client{}
 
 func main() {
 	if os.Getenv("IS_CHILD_PROCESS") == "true" {
@@ -18,6 +47,11 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		run()
+	case "pull":
+		if len(os.Args) < 3 {
+			log.Fatalf("Received only %d param. Expected 3", len(os.Args))
+		}
+		pull()
 	default:
 		fmt.Printf("Unknown command: %v\n", os.Args[1])
 	}
@@ -155,4 +189,71 @@ func getWritableCgroupPath() string {
 	basePath := fmt.Sprintf("/sys/fs/cgroup/user.slice/user-%d.slice/user@%d.service", userUid, userUid)
 
 	return basePath + "/mycontainer"
+}
+
+func pull() {
+	//Regex [a-z0-9]+(?:[._-][a-z0-9]+)* source https://docs.docker.com/reference/api/registry/latest/
+	imageName := os.Args[2]
+	if !strings.Contains(imageName, "/") {
+		imageName = "library/" + imageName
+	}
+	imageSplitTag := strings.Split(imageName, ":")
+	imageName = imageSplitTag[0]
+	imageTag := "latest"
+	if len(imageSplitTag) > 1 && imageSplitTag[1] != "" {
+		imageTag = imageSplitTag[1]
+	}
+
+	authEndpoint := fmt.Sprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:%v:pull", imageName)
+	r := RegistryAuthResponse{}
+	err := getJson(authEndpoint, &r)
+	if err != nil {
+		fmt.Printf("Error decoding auth json: %v\n", err)
+	}
+
+	// fmt.Printf("Token: %v", r.Token)
+	pullEndpoint := fmt.Sprintf("https://registry-1.docker.io/v2/%v/manifests/%v", imageName, imageTag)
+	req, err := http.NewRequest("GET", pullEndpoint, nil)
+
+	req.Header.Set("Authorization", "Bearer "+r.Token)
+	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+
+	respImage, err := httpClient.Do(req)
+	if err != nil {
+		fmt.Printf("Error pulling image: %v\n", err)
+	}
+	defer respImage.Body.Close()
+	// dump, _ := httputil.DumpRequestOut(req, true)
+	// fmt.Println(string(dump))
+
+	if respImage.StatusCode == 404 {
+		log.Fatalf("Image %v:%v not found", imageName, imageTag)
+	}
+
+	imageManifest := Manifest{}
+	err = json.NewDecoder(respImage.Body).Decode(&imageManifest)
+	if err != nil {
+		fmt.Printf("Error decoding manifest response: %v", err)
+	}
+
+	// printStruct(imageManifest)
+}
+
+func getJson(url string, target any) error {
+	r, err := httpClient.Get(url)
+	if err != nil {
+		return err
+	}
+	defer r.Body.Close()
+
+	return json.NewDecoder(r.Body).Decode(target)
+}
+
+func printStruct(data any) {
+	b, err := json.MarshalIndent(data, "", "    ")
+	if err != nil {
+		fmt.Println("Error printing struct:", err)
+		return
+	}
+	fmt.Println(string(b))
 }
