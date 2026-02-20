@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -218,25 +220,23 @@ func pull() {
 	req.Header.Set("Authorization", "Bearer "+r.Token)
 	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
 
-	respImage, err := httpClient.Do(req)
-	if err != nil {
-		fmt.Printf("Error pulling image: %v\n", err)
-	}
-	defer respImage.Body.Close()
-	// dump, _ := httputil.DumpRequestOut(req, true)
-	// fmt.Println(string(dump))
+	manifestsList := pullManifest(r.Token, imageName, imageTag)
+	// printStruct(manifestsList)
 
-	if respImage.StatusCode == 404 {
-		log.Fatalf("Image %v:%v not found", imageName, imageTag)
+	digest := digestByArch(manifestsList, runtime.GOARCH, runtime.GOOS)
+	if digest == "" {
+		log.Fatal("No compatible image was found with current distribution")
 	}
 
-	imageManifest := Manifest{}
-	err = json.NewDecoder(respImage.Body).Decode(&imageManifest)
-	if err != nil {
-		fmt.Printf("Error decoding manifest response: %v", err)
+	// log.Printf("Digest: %v\n", digest)
+	manifest := pullManifest(r.Token, imageName, digest)
+	printStruct(manifest)
+
+	for i := range manifest.Layers {
+		pullLayer(r.Token, imageName, manifest.Layers[i].Digest)
 	}
 
-	// printStruct(imageManifest)
+	// fmt.Printf("Digest: %v\n", digest)
 }
 
 func getJson(url string, target any) error {
@@ -256,4 +256,70 @@ func printStruct(data any) {
 		return
 	}
 	fmt.Println(string(b))
+}
+
+func digestByArch(list Manifest, arch string, os string) string {
+	for i := range list.Manifests {
+		if list.Manifests[i].Platform.Architecture == arch && list.Manifests[i].Platform.OS == os {
+			return list.Manifests[i].Digest
+		}
+	}
+
+	return ""
+}
+
+func pullManifest(token string, imageName string, reference string) Manifest {
+	pullEndpoint := fmt.Sprintf("https://registry-1.docker.io/v2/%v/manifests/%v", imageName, reference)
+	req, _ := http.NewRequest("GET", pullEndpoint, nil)
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+
+	respManifest, err := httpClient.Do(req)
+	if err != nil {
+		fmt.Printf("Error pulling image: %v\n", err)
+	}
+	defer respManifest.Body.Close()
+	// dump, _ := httputil.DumpRequestOut(req, true)
+	// fmt.Println(string(dump))
+
+	if respManifest.StatusCode == 404 {
+		log.Fatalf("Image %v:%v not found", imageName, reference)
+	}
+
+	manifestsList := Manifest{}
+	err = json.NewDecoder(respManifest.Body).Decode(&manifestsList)
+	if err != nil {
+		fmt.Printf("Error decoding manifest response: %v", err)
+	}
+
+	// printStruct(respImage.Header)
+
+	return manifestsList
+}
+
+func pullLayer(token string, imageName string, reference string) {
+	pullEndpoint := fmt.Sprintf("https://registry-1.docker.io/v2/%v/blobs/%v", imageName, reference)
+	req, _ := http.NewRequest("GET", pullEndpoint, nil)
+
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	r, err := httpClient.Do(req)
+	if err != nil {
+		fmt.Printf("Error downloading layer: %v", err)
+	}
+	defer r.Body.Close()
+
+	fileName := strings.TrimPrefix(reference, "sha256:") + ".tar"
+	out, err := os.Create(fileName)
+	if err != nil {
+		log.Fatalf("Error creating file: %v", err)
+	}
+	defer out.Close()
+
+	fmt.Printf("Downloading file: %s...\n", fileName)
+	_, err = io.Copy(out, r.Body)
+	if err != nil {
+		log.Fatalf("Error writing to file: %v", err)
+	}
 }
