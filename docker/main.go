@@ -233,7 +233,16 @@ func pull() {
 	printStruct(manifest)
 
 	for i := range manifest.Layers {
-		pullLayer(r.Token, imageName, manifest.Layers[i].Digest)
+		layerZip := pullLayer(r.Token, imageName, manifest.Layers[i].Digest)
+		fmt.Printf("Extracting layer %v\n", layerZip)
+		err = extractLayer(layerZip, "./resources")
+		if err != nil {
+			fmt.Printf("Error while extracting layer: %v\n", err)
+		}
+		err = os.Remove(layerZip)
+		if err != nil {
+			fmt.Printf("Error while deleting layer: %v\n", err)
+		}
 	}
 
 	// fmt.Printf("Digest: %v\n", digest)
@@ -298,7 +307,7 @@ func pullManifest(token string, imageName string, reference string) Manifest {
 	return manifestsList
 }
 
-func pullLayer(token string, imageName string, reference string) {
+func pullLayer(token string, imageName string, reference string) string {
 	pullEndpoint := fmt.Sprintf("https://registry-1.docker.io/v2/%v/blobs/%v", imageName, reference)
 	req, _ := http.NewRequest("GET", pullEndpoint, nil)
 
@@ -322,4 +331,17 @@ func pullLayer(token string, imageName string, reference string) {
 	if err != nil {
 		log.Fatalf("Error writing to file: %v", err)
 	}
+
+	return fileName
+}
+
+func extractLayer(fileName string, targetDir string) error {
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return err
+	}
+
+	cmd := exec.Command("tar", "-xf", fileName, "-C", targetDir)
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
 }
