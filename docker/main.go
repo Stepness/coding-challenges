@@ -43,10 +43,12 @@ type Manifest struct {
 var (
 	httpClient = &http.Client{}
 	verbose    bool
+	remove     bool
 )
 
 func main() {
 	flag.BoolVar(&verbose, "v", false, "enable verbose logging")
+	flag.BoolVar(&remove, "rm", false, "delete the container after exiting")
 	flag.Parse()
 	argsWithoutFlags := flag.Args()
 
@@ -64,7 +66,8 @@ func main() {
 	command := argsWithoutFlags[0]
 	switch command {
 	case "run":
-		run(argsWithoutFlags[1:])
+		pull(argsWithoutFlags)
+		run(argsWithoutFlags[2:])
 	case "pull":
 		if len(argsWithoutFlags) < 2 {
 			log.Fatalf("Received only %d param. Expected 2", len(argsWithoutFlags))
@@ -72,6 +75,14 @@ func main() {
 		pull(argsWithoutFlags)
 	default:
 		fmt.Printf("Unknown command: %v\n", argsWithoutFlags[0])
+	}
+
+	if remove {
+		myContainerFolder := myContainerFolder()
+		err := os.RemoveAll(myContainerFolder)
+		if err != nil {
+			log.Fatalf("Error deleting mycontainer folder at path %v: %v", myContainerFolder, err)
+		}
 	}
 }
 
@@ -134,7 +145,7 @@ func run(args []string) {
 func child(args []string) {
 	logverbose("Child args:%v", args)
 
-	err := syscall.Chroot("./resources")
+	err := syscall.Chroot(myContainerFolder())
 	if err != nil {
 		fmt.Printf("Error setting chroot: %v\n", err)
 		os.Exit(1)
@@ -255,7 +266,7 @@ func pull(args []string) {
 	for i := range manifest.Layers {
 		layerZip := pullLayer(r.Token, imageName, manifest.Layers[i].Digest)
 		fmt.Printf("Extracting layer %v\n", layerZip)
-		err = extractLayer(layerZip, "./resources")
+		err = extractLayer(layerZip, myContainerFolder())
 		if err != nil {
 			fmt.Printf("Error while extracting layer: %v\n", err)
 		}
@@ -368,4 +379,16 @@ func logverbose(format string, v ...any) {
 	if verbose {
 		fmt.Printf("[LOG] "+format+"\n", v...)
 	}
+}
+
+func myContainerFolder() string {
+	myContainerFolder, _ := os.UserConfigDir()
+	myContainerFolder += "/mydocker/container"
+	logverbose("mydocker folder is: %v", myContainerFolder)
+	err := os.MkdirAll(myContainerFolder, 0750)
+	if err != nil {
+		log.Fatalf("Error while creating mycontainer folder at '%v': %v", myContainerFolder, err)
+	}
+
+	return myContainerFolder
 }
