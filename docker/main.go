@@ -3,10 +3,12 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"os/exec"
 	"runtime"
@@ -38,24 +40,38 @@ type Manifest struct {
 	} `json:"layers"`
 }
 
-var httpClient = &http.Client{}
+var (
+	httpClient = &http.Client{}
+	verbose    bool
+)
 
 func main() {
+	flag.BoolVar(&verbose, "v", false, "enable verbose logging")
+	flag.Parse()
+	argsWithoutFlags := flag.Args()
+
+	logverbose("Parent args: %v", os.Args)
+
+	if os.Getenv("VERBOSE") == "true" {
+		verbose = true
+	}
+
 	if os.Getenv("IS_CHILD_PROCESS") == "true" {
-		child()
+		child(argsWithoutFlags)
 		return
 	}
 
-	switch os.Args[1] {
+	command := argsWithoutFlags[0]
+	switch command {
 	case "run":
-		run()
+		run(argsWithoutFlags[1:])
 	case "pull":
-		if len(os.Args) < 3 {
-			log.Fatalf("Received only %d param. Expected 3", len(os.Args))
+		if len(argsWithoutFlags) < 2 {
+			log.Fatalf("Received only %d param. Expected 2", len(argsWithoutFlags))
 		}
-		pull()
+		pull(argsWithoutFlags)
 	default:
-		fmt.Printf("Unknown command: %v\n", os.Args[1])
+		fmt.Printf("Unknown command: %v\n", argsWithoutFlags[0])
 	}
 }
 
@@ -63,8 +79,8 @@ func main() {
 // /proc/self/exe, and setting the [IS_CHILD_PROCESS] env variable.
 //
 // The child process is then put in new namespaces and has cgroup configured.
-func run() {
-	cmd := exec.Command("/proc/self/exe", os.Args[2:]...)
+func run(args []string) {
+	cmd := exec.Command("/proc/self/exe", args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWUTS |
 			syscall.CLONE_NEWPID |
@@ -92,6 +108,9 @@ func run() {
 	cmd.Stdin = os.Stdin
 	cmd.Env = append(os.Environ(), "IS_CHILD_PROCESS=true")
 	cmd.Env = append(cmd.Env, `PS1=\u@\h:\w\$ `)
+	if verbose {
+		cmd.Env = append(cmd.Env, "VERBOSE=true")
+	}
 
 	err := cmd.Start()
 	if err != nil {
@@ -112,8 +131,8 @@ func run() {
 	cmd.Wait()
 }
 
-func child() {
-	// fmt.Println("Child args", os.Args)
+func child(args []string) {
+	logverbose("Child args:%v", args)
 
 	err := syscall.Chroot("./resources")
 	if err != nil {
@@ -145,7 +164,7 @@ func child() {
 		os.Exit(1)
 	}
 
-	cmd := exec.Command(os.Args[1], os.Args[2:]...)
+	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -159,7 +178,7 @@ func child() {
 // Cgroup configuration happens in the host, not the container.
 func configureCgroup(container_pid int) string {
 	userCgroupPath := getWritableCgroupPath()
-	// fmt.Println("User dedicated cgroup: " + userCgroupPath)
+	logverbose("User dedicated cgroup: %v", userCgroupPath)
 
 	err := os.MkdirAll(userCgroupPath, 0755)
 	if err != nil {
@@ -193,9 +212,9 @@ func getWritableCgroupPath() string {
 	return basePath + "/mycontainer"
 }
 
-func pull() {
+func pull(args []string) {
 	//Regex [a-z0-9]+(?:[._-][a-z0-9]+)* source https://docs.docker.com/reference/api/registry/latest/
-	imageName := os.Args[2]
+	imageName := args[1]
 	if !strings.Contains(imageName, "/") {
 		imageName = "library/" + imageName
 	}
@@ -213,7 +232,8 @@ func pull() {
 		fmt.Printf("Error decoding auth json: %v\n", err)
 	}
 
-	// fmt.Printf("Token: %v", r.Token)
+	logverbose("Token: %v", r.Token)
+
 	pullEndpoint := fmt.Sprintf("https://registry-1.docker.io/v2/%v/manifests/%v", imageName, imageTag)
 	req, err := http.NewRequest("GET", pullEndpoint, nil)
 
@@ -221,16 +241,16 @@ func pull() {
 	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
 
 	manifestsList := pullManifest(r.Token, imageName, imageTag)
-	// printStruct(manifestsList)
+	logverbose("Manifest list:\n%v", printStruct(manifestsList))
 
 	digest := digestByArch(manifestsList, runtime.GOARCH, runtime.GOOS)
 	if digest == "" {
 		log.Fatal("No compatible image was found with current distribution")
 	}
 
-	// log.Printf("Digest: %v\n", digest)
 	manifest := pullManifest(r.Token, imageName, digest)
-	printStruct(manifest)
+
+	logverbose("Manifest:\n%v", printStruct(manifest))
 
 	for i := range manifest.Layers {
 		layerZip := pullLayer(r.Token, imageName, manifest.Layers[i].Digest)
@@ -244,8 +264,6 @@ func pull() {
 			fmt.Printf("Error while deleting layer: %v\n", err)
 		}
 	}
-
-	// fmt.Printf("Digest: %v\n", digest)
 }
 
 func getJson(url string, target any) error {
@@ -258,13 +276,12 @@ func getJson(url string, target any) error {
 	return json.NewDecoder(r.Body).Decode(target)
 }
 
-func printStruct(data any) {
+func printStruct(data any) string {
 	b, err := json.MarshalIndent(data, "", "    ")
 	if err != nil {
 		fmt.Println("Error printing struct:", err)
-		return
 	}
-	fmt.Println(string(b))
+	return fmt.Sprint(string(b))
 }
 
 func digestByArch(list Manifest, arch string, os string) string {
@@ -289,8 +306,11 @@ func pullManifest(token string, imageName string, reference string) Manifest {
 		fmt.Printf("Error pulling image: %v\n", err)
 	}
 	defer respManifest.Body.Close()
-	// dump, _ := httputil.DumpRequestOut(req, true)
-	// fmt.Println(string(dump))
+
+	if verbose {
+		dump, _ := httputil.DumpRequestOut(req, true)
+		logverbose("HTTP pull request:\n%v", string(dump))
+	}
 
 	if respManifest.StatusCode == 404 {
 		log.Fatalf("Image %v:%v not found", imageName, reference)
@@ -301,8 +321,6 @@ func pullManifest(token string, imageName string, reference string) Manifest {
 	if err != nil {
 		fmt.Printf("Error decoding manifest response: %v", err)
 	}
-
-	// printStruct(respImage.Header)
 
 	return manifestsList
 }
@@ -344,4 +362,10 @@ func extractLayer(fileName string, targetDir string) error {
 	cmd.Stderr = os.Stderr
 
 	return cmd.Run()
+}
+
+func logverbose(format string, v ...any) {
+	if verbose {
+		fmt.Printf("[LOG] "+format+"\n", v...)
+	}
 }
