@@ -11,6 +11,7 @@ import (
 	"net/http/httputil"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -20,6 +21,12 @@ import (
 type RegistryAuthResponse struct {
 	Token string
 }
+
+const (
+	ANSIColorBlue  = "\033[34m"
+	ANSIColorReset = "\033[0m"
+	ANSIBold       = "\033[1m"
+)
 
 type Manifest struct {
 	SchemaVersion int    `json:"schemaVersion"`
@@ -132,6 +139,8 @@ func run(args []string) {
 		}
 	}
 
+	configureNetwork(cmd.Process.Pid)
+
 	userCgroupPath := configureCgroup(cmd.Process.Pid)
 	defer func() {
 		if err := os.Remove(userCgroupPath); err != nil {
@@ -145,7 +154,9 @@ func run(args []string) {
 func child(args []string) {
 	logverbose("Child args:%v", args)
 
-	err := syscall.Chroot(myContainerFolder())
+	myContainerFolder := myContainerFolder()
+	err := syscall.Chroot(myContainerFolder)
+	logverbose("mycontainer folder is: %v", myContainerFolder)
 	if err != nil {
 		fmt.Printf("Error setting chroot: %v\n", err)
 		os.Exit(1)
@@ -157,12 +168,14 @@ func child(args []string) {
 		os.Exit(1)
 	}
 
+	os.Mkdir("/proc", 0755)
 	err = syscall.Mount("proc", "/proc", "proc", 0, "")
 	if err != nil {
 		fmt.Printf("Error proc mount: %v\n", err)
 		os.Exit(1)
 	}
 
+	os.Mkdir("/sys", 0755)
 	err = syscall.Mount("sysfs", "/sys", "sysfs", 0, "")
 	if err != nil {
 		fmt.Printf("Error sysfs mount: %v\n", err)
@@ -242,8 +255,6 @@ func pull(args []string) {
 	if err != nil {
 		fmt.Printf("Error decoding auth json: %v\n", err)
 	}
-
-	logverbose("Token: %v", r.Token)
 
 	pullEndpoint := fmt.Sprintf("https://registry-1.docker.io/v2/%v/manifests/%v", imageName, imageTag)
 	req, err := http.NewRequest("GET", pullEndpoint, nil)
@@ -348,7 +359,7 @@ func pullLayer(token string, imageName string, reference string) string {
 	}
 	defer r.Body.Close()
 
-	fileName := strings.TrimPrefix(reference, "sha256:") + ".tar"
+	fileName := filepath.Join(os.TempDir(), strings.TrimPrefix(reference, "sha256:")+".tar")
 	out, err := os.Create(fileName)
 	if err != nil {
 		log.Fatalf("Error creating file: %v", err)
@@ -377,18 +388,35 @@ func extractLayer(fileName string, targetDir string) error {
 
 func logverbose(format string, v ...any) {
 	if verbose {
-		fmt.Printf("[LOG] "+format+"\n", v...)
+		fmt.Printf(ANSIBold+ANSIColorBlue+"[LOG]"+ANSIColorReset+" "+format+"\n", v...)
 	}
 }
 
 func myContainerFolder() string {
 	myContainerFolder, _ := os.UserConfigDir()
 	myContainerFolder += "/mydocker/container"
-	logverbose("mydocker folder is: %v", myContainerFolder)
 	err := os.MkdirAll(myContainerFolder, 0750)
 	if err != nil {
 		log.Fatalf("Error while creating mycontainer folder at '%v': %v", myContainerFolder, err)
 	}
 
 	return myContainerFolder
+}
+
+// Implement network bridge with slirp4netns
+// Just follow instructions on the github page
+// https://github.com/rootless-containers/slirp4netns?tab=readme-ov-file#usage
+func configureNetwork(pid int) {
+	netCmd := exec.Command("slirp4netns",
+		"--configure",
+		"--mtu=65520",
+		"--disable-host-loopback",
+		strconv.Itoa(pid),
+		"tap0",
+	)
+
+	err := netCmd.Start()
+	if err != nil {
+		fmt.Printf("Networking failed: %v. Is slirp4netns installed?\n", err)
+	}
 }

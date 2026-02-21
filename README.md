@@ -35,3 +35,26 @@ To trace the most important system calls:
 ```bash
 strace -f -e trace=clone,setns,mount,pivot_root,chroot,openat,write -s 200 <myDockerBinary> run echo hello
 ```
+
+Build:
+```bash
+sudo go build main.go -o mydocker
+```
+
+Running requires `slirp4netns` utility installed on the host machine.
+Run: 
+```bash
+# This app curently download all layers and run the container in a single fixed folder.
+# Location of this folder is $HOME/.config/mydocker/container
+# It doesnt support running multiple containers or running a container in detached mode.
+
+# You can pull the image
+./mydocker pull <image:tag>
+
+# You can pull and run in the same step. 
+# Accepted [OPTIONS] are -v (debug) and -rm (delete the container folder after exiting the process).
+# <command> is the command that will be run by the container process. 
+# Eg: mydocker -rm run busybox sh will attach your shell to the container's shell
+
+./mydocker [OPTIONS] run <image:tag> <command>
+```
