@@ -274,6 +274,7 @@ func pull(args []string) {
 
 	logverbose("Manifest:\n%v", printStruct(manifest))
 
+	fmt.Printf("Found %d layers to pull\n", len(manifest.Layers))
 	for i := range manifest.Layers {
 		layerZip := pullLayer(r.Token, imageName, manifest.Layers[i].Digest)
 		fmt.Printf("Extracting layer %v\n", layerZip)
